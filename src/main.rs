@@ -343,11 +343,14 @@ impl eframe::App for MyApp {
     }
 }
 
+mod mcp;
+
 fn main() {
+    mcp::start_mcp_server();
     let options = eframe::NativeOptions::default();
     let _ = eframe::run_native(
         "Win Control UI",
         options,
-    Box::new(|_cc| Box::new(MyApp::new())),
+        Box::new(|_cc| Box::new(MyApp::new())),
     );
 }

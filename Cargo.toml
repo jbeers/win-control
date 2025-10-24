@@ -6,6 +6,17 @@ edition = "2024"
 [dependencies]
 eframe = "0.27"
 egui = "0.27"
+rmcp = "0.7.0"
+
+# For MCP JSON API
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# For async MCP server
+# For JSON schema derive
+schemars = "1"
+
+# For async MCP server
+tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "net"] }
 
 # For switching Windows audio devices
 windows = { version = "0.56", features = ["Win32_Media_Audio", "Win32_System_Com", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com_StructuredStorage", "Win32_Storage_StructuredStorage"] }
