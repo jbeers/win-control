@@ -1,0 +1,141 @@
+name: release
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'Cargo.toml'
+      - 'src/**'
+
+permissions:
+  contents: write  # needed to create a release
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from Cargo.toml
+        id: get_version
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const cargo = fs.readFileSync('Cargo.toml', 'utf8');
+            const match = cargo.match(/^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"/m);
+            if (!match) {
+              core.setFailed('Could not extract version from Cargo.toml');
+              return;
+            }
+            const version = match[1];
+            core.info(`Detected version: ${version}`);
+            core.setOutput('version', version);
+
+      - name: Extract changelog section for version
+        id: changelog
+        uses: actions/github-script@v7
+        with:
+            script: |
+              const fs = require('fs');
+              const version = core.getInput('version', { required: true });
+              let body = '';
+              try {
+                const changelog = fs.readFileSync('CHANGELOG.md', 'utf8');
+                // Regex: capture heading for version and all content until next heading starting with ## <digit>
+                const escVersion = version.replace(/\./g, '\\.');
+                const re = new RegExp(`(^##?\\s*\\[?v?${escVersion}\\]?[^\\n]*\\n)([\\s\\S]*?)(?=\n##?\\s*\\[?v?\\d+\\.\\d+\\.\\d+\\]?|\n?$)`, 'm');
+                const match = changelog.match(re);
+                if (match) {
+                  body = match[0].trim();
+                  core.info(`Found changelog section for v${version}`);
+                } else {
+                  core.warning('Version section not found in CHANGELOG.md; using full file');
+                  body = changelog.trim();
+                }
+              } catch (e) {
+                core.warning('CHANGELOG.md not found; proceeding without changelog body');
+              }
+              fs.writeFileSync('CHANGELOG-extracted.md', body + '\n');
+              core.setOutput('body', body);
+            version: ${{ steps.get_version.outputs.version }}
+
+      - name: Fail if release already exists
+        id: check_release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = core.getInput('version', { required: true });
+            const tag = `v${version}`;
+            try {
+              await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag,
+              });
+              core.setFailed(`A release for ${tag} already exists. Bump the version before releasing.`);
+            } catch (e) {
+              if (e.status === 404) {
+                core.info(`No existing release for ${tag}; proceeding.`);
+              } else {
+                throw e;
+              }
+            }
+          result-encoding: string
+          version: ${{ steps.get_version.outputs.version }}
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build (release, Windows x86_64)
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Prepare artifact (zip)
+        shell: pwsh
+        run: |
+          $Version = '${{ steps.get_version.outputs.version }}'
+          $BinPath = 'target/x86_64-pc-windows-msvc/release/win-control.exe'
+          if (!(Test-Path $BinPath)) { throw "Binary not found at $BinPath" }
+          $ZipName = "win-control-$Version-windows-x86_64.zip"
+          if (Test-Path $ZipName) { Remove-Item $ZipName -Force }
+          Compress-Archive -Path $BinPath -DestinationPath $ZipName
+          echo "Created $ZipName"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-control-${{ steps.get_version.outputs.version }}-windows-x86_64
+          path: win-control-${{ steps.get_version.outputs.version }}-windows-x86_64.zip
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          name: v${{ steps.get_version.outputs.version }}
+          body: ${{ steps.changelog.outputs.body }}
+          draft: false
+          prerelease: false
+          files: |
+            win-control-${{ steps.get_version.outputs.version }}-windows-x86_64.zip
+            CHANGELOG-extracted.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
