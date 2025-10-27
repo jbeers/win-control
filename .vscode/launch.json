@@ -1,0 +1,10 @@
+{
+    "configurations": [
+        {
+            "type": "cargo",
+            "request": "launch",
+            "name": "Cargo Run with Arg",
+            "args": ["--", "--list-audio-devices"]
+        }
+    ]
+}

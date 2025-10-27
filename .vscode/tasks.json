@@ -1,0 +1,13 @@
+{
+    "tasks": [
+        {
+            "type": "cargo",
+            "command": "run",
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "label": "rust: app list devices",
+            "args": [ "--", "--list-audio-devices" ] 
+        }
+    ]
+}

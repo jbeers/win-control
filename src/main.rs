@@ -1,4 +1,29 @@
-use eframe::egui;
+// ...existing code...
+use clap::{Parser, ArgAction};
+use serde::Serialize;
+
+
+
+#[derive(Parser, Debug)]
+#[command(author, version, about)]
+struct Cli {
+    /// List all audio output devices
+    #[arg(long, action = ArgAction::SetTrue)]
+    list_audio_devices: bool,
+    
+    #[arg(long, action = ArgAction::SetTrue)]
+    list_audio_devices_json: bool,
+
+    /// Set default audio output device by ID
+    #[arg(long, value_name = "DEVICE_ID")]
+    set_audio_device: Option<String>,
+}
+
+#[derive(Serialize)]
+struct AudioDevice {
+    id: String,
+    name: String,
+}
 
 #[cfg(target_os = "windows")]
 unsafe extern "system" {
@@ -14,10 +39,13 @@ unsafe extern "system" {
 
 #[cfg(target_os = "windows")]
 mod audio {
+    use windows::Win32::System::Com::{STGM};
     use windows::core::{GUID, PCWSTR};
-    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+    use windows::Win32::Foundation::{PROPERTYKEY, RPC_E_CHANGED_MODE};
     use windows::Win32::Media::Audio::{eMultimedia, eRender, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE};
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED};
+
+    use crate::AudioDevice;
 
     pub fn set_default_output_by_name(name_match: &str) {
         unsafe {
@@ -166,7 +194,7 @@ mod audio {
         Ok(())
     }
 
-    pub fn list_devices() -> Vec<String> {
+    pub fn list_devices() -> Vec<AudioDevice> {
         let mut out = Vec::new();
         unsafe {
             let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
@@ -209,11 +237,31 @@ mod audio {
 
             for i in 0..count {
                 if let Ok(device) = collection.Item(i) {
+
+                    let mut name = "".to_string();
+                    let mut idValue = "".to_string();
+
+                    // Open the property store for the device
+                    use windows::Win32::System::Com::STGM_READ;
+                    use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
+                    if let Ok(store) = device.OpenPropertyStore(STGM_READ) {                        
+                        match store.GetValue(&PKEY_Device_FriendlyName) {
+                            Ok(p) => {
+                                // Convert PROPVARIANT to String
+                                name = unsafe {
+                                    p.to_string()
+                                };
+                            },
+                            Err(_) => continue,
+                        }                        
+                    }
                     if let Ok(id) = device.GetId() {
                         if let Ok(id_str) = id.to_string() {
-                            out.push(id_str);
+                            idValue = id_str;
                         }
                     }
+
+                    out.push(AudioDevice { id: idValue, name } );
                 }
             }
 
@@ -292,65 +340,78 @@ mod audio {
     }
 }
 
-struct MyApp {
+
+fn print_devices() -> () {
     #[cfg(target_os = "windows")]
-    devices: Vec<String>,
-}
-
-impl MyApp {
-    fn new() -> Self {
-        #[cfg(target_os = "windows")]
-        {
-            let devices = audio::list_devices();
-            return Self { devices };
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            Self {}
+    {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         }
     }
+
+    #[cfg(target_os = "windows")]
+    {
+        let devices = audio::list_devices();
+        for device in devices {
+            println!("{}: {}", device.id, device.name);
+        }
+    } 
 }
 
-impl eframe::App for MyApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Audio Output Switcher");
-            #[cfg(target_os = "windows")]
-            {
-                ui.separator();
-                ui.label("Available audio output devices (IDs):");
-                for d in &self.devices {
-                    ui.horizontal(|ui| {
-                        ui.monospace(d);
-                        if ui.button("Set default").clicked() {
-                            audio::set_default_output_by_id_str(d);
-                        }
-                    });
-                }
-                ui.separator();
-            }
-            ui.horizontal(|ui| {
-                if ui.button("🎧").on_hover_text("Set output to Headphones").clicked() {
-                    #[cfg(target_os = "windows")]
-                    audio::set_default_output_by_id_str("{0.0.0.00000000}.{fb922932-0cbf-493d-b144-1e59e8b1201f}");
-                }
-                if ui.button("🔊").on_hover_text("Set output to USB Speakers").clicked() {
-                    #[cfg(target_os = "windows")]
-                    audio::set_default_output_by_id_str("{0.0.0.00000000}.{a6a30f8c-8ab9-43fb-bd33-cd551585f75e}");
-                }
-            });
-        });
+fn print_devices_json() -> () {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let devices = audio::list_devices();
+        // Serialize to JSON and print
+        match serde_json::to_string_pretty(&devices) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("Failed to serialize devices: {}", e),
+        }
+    } 
+}
+
+fn select_device(device_id: &str) -> () {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        audio::set_default_output_by_id_str(device_id);
     }
 }
-
-mod mcp;
 
 fn main() {
-    mcp::start_mcp_server();
-    let options = eframe::NativeOptions::default();
-    let _ = eframe::run_native(
-        "Win Control UI",
-        options,
-        Box::new(|_cc| Box::new(MyApp::new())),
-    );
+
+    let cli = Cli::parse();
+
+    #[cfg(target_os = "windows")]
+    {
+        if cli.list_audio_devices {
+            print_devices();
+            return;
+        }
+        else if cli.list_audio_devices_json {
+            print_devices_json();
+            return;
+        }
+        else if let Some(device_id) = cli.set_audio_device {
+            select_device(&device_id);
+            return;
+        }
+    }
+     
 }
