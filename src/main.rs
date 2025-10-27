@@ -39,9 +39,8 @@ unsafe extern "system" {
 
 #[cfg(target_os = "windows")]
 mod audio {
-    use windows::Win32::System::Com::{STGM};
     use windows::core::{GUID, PCWSTR};
-    use windows::Win32::Foundation::{PROPERTYKEY, RPC_E_CHANGED_MODE};
+    use windows::Win32::Foundation::{RPC_E_CHANGED_MODE};
     use windows::Win32::Media::Audio::{eMultimedia, eRender, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE};
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED};
 
@@ -239,7 +238,7 @@ mod audio {
                 if let Ok(device) = collection.Item(i) {
 
                     let mut name = "".to_string();
-                    let mut idValue = "".to_string();
+                    let mut id_value = "".to_string();
 
                     // Open the property store for the device
                     use windows::Win32::System::Com::STGM_READ;
@@ -248,20 +247,18 @@ mod audio {
                         match store.GetValue(&PKEY_Device_FriendlyName) {
                             Ok(p) => {
                                 // Convert PROPVARIANT to String
-                                name = unsafe {
-                                    p.to_string()
-                                };
+                                name = p.to_string();
                             },
                             Err(_) => continue,
                         }                        
                     }
                     if let Ok(id) = device.GetId() {
                         if let Ok(id_str) = id.to_string() {
-                            idValue = id_str;
+                            id_value = id_str;
                         }
                     }
 
-                    out.push(AudioDevice { id: idValue, name } );
+                    out.push(AudioDevice { id: id_value, name } );
                 }
             }
 
