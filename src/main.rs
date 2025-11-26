@@ -14,6 +14,9 @@ struct Cli {
     #[arg(long, action = ArgAction::SetTrue)]
     list_audio_devices_json: bool,
 
+    #[arg(long, action = ArgAction::SetTrue)]
+    get_default_audio_device: bool,
+
     /// Set default audio output device by ID
     #[arg(long, value_name = "DEVICE_ID")]
     set_audio_device: Option<String>,
@@ -335,6 +338,77 @@ mod audio {
             }
         }
     }
+
+    pub fn get_default_output_device() -> Option<AudioDevice> {
+        use windows::Win32::Media::Audio::{eRender, eMultimedia, IMMDeviceEnumerator, MMDeviceEnumerator};
+        use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL, CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+        use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
+        use windows::Win32::System::Com::STGM_READ;
+
+        unsafe {
+            let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            let mut initialized = false;
+            if hr == windows::Win32::Foundation::RPC_E_CHANGED_MODE {
+                // Already initialized differently; continue.
+            } else if hr.is_ok() {
+                initialized = true;
+            } else {
+                eprintln!("CoInitializeEx failed: 0x{:08X}", hr.0 as u32);
+                return None;
+            }
+
+            let enumerator: IMMDeviceEnumerator = match CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("CoCreateInstance failed: {e}");
+                    if initialized { CoUninitialize(); }
+                    return None;
+                }
+            };
+
+            let device = match enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("GetDefaultAudioEndpoint failed: {e}");
+                    if initialized { CoUninitialize(); }
+                    return None;
+                }
+            };
+
+            // Get device ID
+            let id = match device.GetId() {
+                Ok(id) => id,
+                Err(_) => {
+                    if initialized { CoUninitialize(); }
+                    return None;
+                }
+            };
+            let id_str = match id.to_string() {
+                Ok(s) => s,
+                Err(_) => {
+                    if initialized { CoUninitialize(); }
+                    return None;
+                }
+            };
+
+            // Get friendly name
+            let mut name = "<Unknown>".to_string();
+            if let Ok(store) = device.OpenPropertyStore(STGM_READ) {
+                match store.GetValue(&PKEY_Device_FriendlyName) {
+                    Ok(p) => {
+                        name = p.to_string();
+                    },
+                    Err(_) => {}
+                }
+            }
+
+            if initialized {
+                CoUninitialize();
+            }
+
+            Some(AudioDevice { id: id_str, name })
+        }
+    }
 }
 
 
@@ -352,6 +426,28 @@ fn print_devices() -> () {
         let devices = audio::list_devices();
         for device in devices {
             println!("{}: {}", device.id, device.name);
+        }
+    } 
+}
+
+fn print_default_device() -> () {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(device) = audio::get_default_output_device() {
+            match serde_json::to_string_pretty(&device) {
+                Ok(json) => println!("{}", json),
+                Err(e) => eprintln!("Failed to serialize devices: {}", e),
+            }
+        } else {
+            eprintln!("Failed to get default audio device.");
         }
     } 
 }
@@ -391,6 +487,8 @@ fn select_device(device_id: &str) -> () {
     }
 }
 
+
+
 fn main() {
 
     let cli = Cli::parse();
@@ -405,6 +503,10 @@ fn main() {
             print_devices_json();
             return;
         }
+        else if cli.get_default_audio_device {
+            print_default_device();
+            return;
+        }   
         else if let Some(device_id) = cli.set_audio_device {
             select_device(&device_id);
             return;
